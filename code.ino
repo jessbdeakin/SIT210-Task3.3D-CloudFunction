@@ -496,22 +496,26 @@ void subscribe(String topicName){
 ////////////////////////////////////////////////
 ////////////////////////////////////////////////
 
-void blinkLED(unsigned int length, unsigned int times = 1){
+void blinkLED(unsigned int onDuration, unsigned int offDuration, unsigned int times = 1){
     for(int i = 0; i < times; i++){
         digitalWrite(LED_PIN, HIGH);
-    	delay(length);
+    	delay(onDuration);
     	digitalWrite(LED_PIN, LOW);
-    	delay(length);
+    	delay(offDuration);
     }
 }
 
 String waveTopicName = "SIT210/wave";
+String patTopicName = "SIT210/pat";
 unsigned int sinceLastWave = 0;
 String ownName = "jess";
 
 void publishHandler(PublishPacket packet){
     if(packet.topicName == waveTopicName && packet.payload != ownName)
-        blinkLED(300, 3);
+        blinkLED(300, 300, 3);
+        
+    if(packet.topicName == patTopicName && packet.payload != ownName)
+        blinkLED(700, 200, 2);
 }
 
 void setup() {
@@ -529,6 +533,7 @@ void setup() {
 	
 	connect("clientjessb");
 	subscribe(waveTopicName);
+	subscribe(patTopicName);
 	
 	sinceLastWave = millis();
 	
