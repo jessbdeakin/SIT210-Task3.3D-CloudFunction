@@ -209,6 +209,8 @@ IPAddress brokerIP;
 #define DISCONNECT_COMMAND 14
 
 unsigned int globalPacketID = 0;
+unsigned int keepAliveInterval;
+unsigned int lastKeepAlive;
 
 struct PacketHeader {
 	unsigned int commandType : 4;
@@ -406,6 +408,52 @@ struct PubackPacket {
     }
 };
 
+struct PingreqPacket {
+    PacketHeader header;
+    
+    static PingreqPacket create(){
+        PingreqPacket packet;
+        
+        packet.header = {PINGREQ_COMMAND, 0, NULL};
+        
+        return packet;
+    }
+    
+    void encode(){
+        header.encode();
+        header.fixEncoding();
+    }
+};
+
+struct PingrespPacket {
+    PacketHeader header;
+    
+    static PingrespPacket decode(){
+        PingrespPacket packet;
+        
+        packet.header = PacketHeader::decode();
+        
+        return packet;
+    }
+};
+
+struct DisconnectPacket {
+    PacketHeader header;
+    
+    static DisconnectPacket create(){
+        DisconnectPacket packet;
+        
+        packet.header = {DISCONNECT_COMMAND, 0, NULL};
+        
+        return packet;
+    }
+    
+    void encode(){
+        header.encode();
+        header.fixEncoding();
+    }
+};
+
 void publishHandler(PublishPacket packet);
 
 unsigned int handlePacket(){
@@ -421,19 +469,19 @@ unsigned int handlePacket(){
         case PUBREC_COMMAND:
         case PUBREL_COMMAND:
         case PUBCOMP_COMMAND:
-            Serial.printlnf("PUB* %u, %u, %u", header.commandType, header.controlFlags, header.length);
+            Serial.printlnf("<- PUB* %u, %u, %u", header.commandType, header.controlFlags, header.length);
             PubackPacket::decode();
         break;
         
         case SUBACK_COMMAND:
-            Serial.printlnf("SUBACK %u, %u", header.controlFlags, header.length);
+            Serial.printlnf("<- SUBACK %u, %u", header.controlFlags, header.length);
             SubackPacket::decode();
         break;
         
         case PUBLISH_COMMAND: {
             PublishPacket packet = PublishPacket::decode();
             
-            Serial.printlnf("PUBLISH: Message received in topic '%s': %s", 
+            Serial.printlnf("<- PUBLISH: Message received in topic '%s': %s", 
                 packet.topicName.c_str(), 
                 packet.payload.c_str()
             );
@@ -442,8 +490,12 @@ unsigned int handlePacket(){
             
         } break;
         
+        case PINGRESP_COMMAND:
+            PingrespPacket::decode();
+        break;
+        
         default:
-            Serial.printlnf("??? %u, %u, %u", header.commandType, header.controlFlags, header.length);
+            Serial.printlnf("<- ??? %u, %u, %u", header.commandType, header.controlFlags, header.length);
             error("Program does not support handling this command type.");
         break;
     }
@@ -467,11 +519,27 @@ bool awaitPacket(unsigned int targetCommandType){
 }
 
 void connect(String clientID, unsigned int keepAlive = 60){
+    keepAliveInterval = keepAlive;
+    
     ConnectPacket connectPacket = ConnectPacket::create(clientID, keepAlive);
 	connectPacket.encode();
 	flushOutPacketBuffer();
 	
 	awaitPacket(CONNACK_COMMAND);
+	
+	lastKeepAlive = millis();
+}
+
+void pingreq(){
+    PingreqPacket packet = PingreqPacket::create();
+    packet.encode();
+    flushOutPacketBuffer();
+}
+
+void disconnect(){
+    DisconnectPacket disconnectPacket = DisconnectPacket::create();
+    disconnectPacket.encode();
+    flushOutPacketBuffer();
 }
 
 uint16_t publish(String topicName, String payload){
@@ -508,7 +576,7 @@ void blinkLED(unsigned int onDuration, unsigned int offDuration, unsigned int ti
 String waveTopicName = "SIT210/wave";
 String patTopicName = "SIT210/pat";
 unsigned int sinceLastWave = 0;
-String ownName = "jess";
+String ownName = "jessargon";
 
 void publishHandler(PublishPacket packet){
     if(packet.topicName == waveTopicName && packet.payload != ownName)
@@ -531,7 +599,7 @@ void setup() {
 	brokerIP = WiFi.resolve(brokerHostname);
 	client.connect(brokerIP, brokerPort);
 	
-	connect("clientjessb");
+	connect("clientjessb", 60);
 	subscribe(waveTopicName);
 	subscribe(patTopicName);
 	
@@ -540,6 +608,11 @@ void setup() {
 }
 
 void loop() {
+    
+    if( millis() - lastKeepAlive >= (keepAliveInterval*1000) - (keepAliveInterval*250) ){
+        lastKeepAlive = millis();
+        pingreq();
+    }
     
     receiveAvailableBytes();
     if(incomingBufferLength() > 0)
@@ -551,10 +624,6 @@ void loop() {
 	    publish(
 	        waveTopicName, 
 	        ownName.c_str()
-	   );
-	   publish(
-	        "SIT210/wave/distance", 
-	        String::format("%u", distance)
 	   );
 	}
 	
